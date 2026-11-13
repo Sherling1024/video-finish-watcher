@@ -154,6 +154,43 @@ test('播完了 / 功能关了 / 总开关关了都不动手', () => {
     assert.equal(VFW.shouldAutoMute(null), false);
 });
 
+console.log('matchNextLabel');
+test('认得常见的中文「下一个」文案', () => {
+    assert.equal(VFW.matchNextLabel('下一集'), '下一集');
+    assert.equal(VFW.matchNextLabel('  下一期 '), '下一期');
+    assert.equal(VFW.matchNextLabel('播放下一话'), '下一话');
+    assert.equal(VFW.matchNextLabel('下一个视频'), '下一个视频');
+});
+test('认得英文 next 且要求整词', () => {
+    assert.equal(VFW.matchNextLabel('Next episode'), 'next episode');
+    assert.equal(VFW.matchNextLabel('next'), 'next');
+    assert.equal(VFW.matchNextLabel('context'), null);
+    assert.equal(VFW.matchNextLabel('nextjs 教程'), null);
+});
+test('不认「上一个」和长文本', () => {
+    assert.equal(VFW.matchNextLabel('上一集'), null);
+    assert.equal(VFW.matchNextLabel('Previous'), null);
+    assert.equal(VFW.matchNextLabel('这是一段很长的视频简介，说明下一个小时该干点什么，长度明显超过阈值'), null);
+    assert.equal(VFW.matchNextLabel(''), null);
+    assert.equal(VFW.matchNextLabel(null), null);
+});
+
+console.log('shouldAutoNext');
+test('开着自动连播、这个视频还没点过 → 点', () => {
+    assert.equal(VFW.shouldAutoNext({ enabled: true, autoNext: true, clickedForThisVideo: false, lastClickAt: -Infinity, now: 1000 }), true);
+});
+test('同一个视频只点一次', () => {
+    assert.equal(VFW.shouldAutoNext({ enabled: true, autoNext: true, clickedForThisVideo: true, now: 1000 }), false);
+});
+test('8 秒内不连点', () => {
+    assert.equal(VFW.shouldAutoNext({ enabled: true, autoNext: true, lastClickAt: 1000, now: 5000 }), false);
+    assert.equal(VFW.shouldAutoNext({ enabled: true, autoNext: true, lastClickAt: 1000, now: 12000 }), true);
+});
+test('功能关闭时不动手', () => {
+    assert.equal(VFW.shouldAutoNext({ enabled: true, autoNext: false }), false);
+    assert.equal(VFW.shouldAutoNext({ enabled: false, autoNext: true }), false);
+});
+
 console.log('createDeduper');test('窗口内只放行一次', () => {
     const d = VFW.createDeduper(2000);
     assert.equal(d(1000), true);

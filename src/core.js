@@ -19,7 +19,7 @@
         flashTitle: true,     // 标签页标题闪烁
         pauseOthers: true,    // 完成后暂停同页其它正在播的视频
         autoMute: true,       // 视频一开始播放就自动静音（用户手动取消静音后不再强行静音）
-        autoNext: false       // 播完后自动点击「下一集 / 下一个视频」
+        autoNext: true        // 播完后自动点击「下一集 / 下一个视频」
     };
 
     var LIMITS = {

@@ -44,6 +44,15 @@
 
 <pre id="log">boot</pre>
 <video id="v" width="16" height="16"></video>
+<button id="next-btn" style="display:inline-block;width:72px;height:28px">下一集</button>
+<script>
+(function () {
+    window.__nextClicks = 0;
+    document.getElementById('next-btn').addEventListener('click', function () {
+        window.__nextClicks += 1;
+    });
+})();
+</script>
 
 <script>
 (function () {
@@ -103,13 +112,14 @@
             report('RESULT end osc=' + window.__vfw.oscillators +
                 ' notify=' + window.__vfw.notifications.length +
                 ' body=' + (window.__vfw.notifications[0] && window.__vfw.notifications[0].body));
-            // 3) 重复事件不应再次提醒
+            // 3) 重复事件不应再次提醒；且自动连播只点了一次
             fire('ended');
             setTimeout(function () {
                 report('RESULT again osc=' + window.__vfw.oscillators +
                     ' notify=' + window.__vfw.notifications.length);
+                report('RESULT next clicks=' + window.__nextClicks);
                 report('DONE');
-            }, 120);
+            }, 1400);
         }, 120);
     }, 300);
 })();

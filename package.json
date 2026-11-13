@@ -1,6 +1,6 @@
 {
   "name": "video-finish-watcher",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "网页视频播放完成后响铃并通知的油猴脚本（Tampermonkey / Violentmonkey）",
   "private": true,
   "scripts": {

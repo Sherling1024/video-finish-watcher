@@ -2,7 +2,7 @@
 // @name         视频播放完成提醒
 // @name:en      Video Finish Watcher
 // @namespace    https://github.com/Sherling1024/video-finish-watcher
-// @version      1.1.0
+// @version      1.2.0
 // @description  网页视频播放结束后响铃 + 系统通知 + 标题闪烁
 // @description:en  Ring a bell and notify when a web video finishes playing.
 // @author       Sherling1024
@@ -35,7 +35,7 @@
         flashTitle: true,     // 标签页标题闪烁
         pauseOthers: true,    // 完成后暂停同页其它正在播的视频
         autoMute: true,       // 视频一开始播放就自动静音（用户手动取消静音后不再强行静音）
-        autoNext: false       // 播完后自动点击「下一集 / 下一个视频」
+        autoNext: true        // 播完后自动点击「下一集 / 下一个视频」
     };
 
     var LIMITS = {
@@ -457,6 +457,11 @@
             });
         }
 
+        // 稍等一下再点「下一集」：有些站点要等片尾 UI 更新完才出现按钮
+        if (cfg.autoNext) {
+            setTimeout(function () { tryAutoNext(video); }, 700);
+        }
+
         // 面板开着的话刷新一下状态
         if (panelRefresh) { panelRefresh(); }
     }
@@ -480,6 +485,99 @@
             video.muted = true;
             rec.mutedByUs = true;
         } catch (e) { /* 某些源不允许改 muted */ }
+    }
+
+    // ---------------- 自动连播（下一集） ----------------
+
+    // 常见站点的「下一个」按钮选择器，命中率比纯文案匹配高
+    var NEXT_SELECTORS = [
+        '.bpx-player-ctrl-next',                 // bilibili 新版播放器
+        '.bilibili-player-video-btn-next',       // bilibili 旧版
+        '.ytp-next-button',                      // YouTube
+        '.xgplayer-big-play-next',
+        'a[class*="next"][class*="player"]'
+    ];
+
+    var lastNextClickAt = -Infinity;
+    var nextClickedFor = new WeakSet();
+
+    function isVisible(el) {
+        if (!el || !el.isConnected) { return false; }
+        var rect = null;
+        try { rect = el.getBoundingClientRect(); } catch (e) { return false; }
+        if (!rect || rect.width < 4 || rect.height < 4) { return false; }
+        try {
+            var cs = window.getComputedStyle(el);
+            if (cs.visibility === 'hidden' || cs.display === 'none' || cs.pointerEvents === 'none') { return false; }
+            if (String(cs.opacity) === '0') { return false; }
+        } catch (e) { /* ignore */ }
+        return true;
+    }
+
+    function labelOf(el) {
+        var parts = [];
+        try {
+            parts.push(el.getAttribute('aria-label'), el.getAttribute('title'), el.getAttribute('data-title'));
+            if (!el.getAttribute('aria-label') && !el.getAttribute('title')) { parts.push(el.textContent); }
+        } catch (e) { /* ignore */ }
+        return parts.filter(Boolean).join(' ');
+    }
+
+    function findNextControl(video) {
+        var i, el;
+        for (i = 0; i < NEXT_SELECTORS.length; i++) {
+            try { el = document.querySelector(NEXT_SELECTORS[i]); } catch (e) { el = null; }
+            if (el && isVisible(el) && !el.disabled) { return el; }
+        }
+
+        // 先在播放器附近找，再退到整页，避免点到页面别处的「下一个」
+        var roots = [];
+        try {
+            var near = video && video.closest ? video.closest('div,section,main,article') : null;
+            if (near) { roots.push(near); }
+        } catch (e) { /* ignore */ }
+        roots.push(document);
+
+        for (var r = 0; r < roots.length; r++) {
+            var cands;
+            try {
+                cands = roots[r].querySelectorAll('button,a,[role="button"],[class*="next"],[class*="Next"]');
+            } catch (e) { continue; }
+            for (var c = 0; c < cands.length; c++) {
+                var cand = cands[c];
+                if (!isVisible(cand) || cand.disabled) { continue; }
+                if (VFW.matchNextLabel(labelOf(cand))) { return cand; }
+            }
+        }
+        return null;
+    }
+
+    function clickControl(el) {
+        try { el.click(); return true; } catch (e) { /* 继续用事件兜底 */ }
+        try {
+            ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach(function (type) {
+                el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+            });
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function tryAutoNext(video) {
+        var allowed = VFW.shouldAutoNext({
+            enabled: cfg.enabled,
+            autoNext: cfg.autoNext,
+            clickedForThisVideo: nextClickedFor.has(video),
+            lastClickAt: lastNextClickAt,
+            now: Date.now()
+        });
+        if (!allowed) { return false; }
+        var el = findNextControl(video);
+        if (!el || !clickControl(el)) { return false; }
+        nextClickedFor.add(video);
+        lastNextClickAt = Date.now();
+        return true;
     }
 
     function tickVideo(video) {
@@ -510,8 +608,11 @@
             rec.listeners.push([name, on]);
         });
 
-        // 换源 / 重新加载 → 状态机复位
-        var onLoad = function () { rec.watcher.rearm(); };
+        // 换源 / 重新加载 → 状态机复位，允许下一次自动连播
+        var onLoad = function () {
+            rec.watcher.rearm();
+            nextClickedFor.delete(video);
+        };
         video.addEventListener('loadstart', onLoad, { passive: true });
         video.addEventListener('emptied', onLoad, { passive: true });
         rec.listeners.push(['loadstart', onLoad], ['emptied', onLoad]);
@@ -594,6 +695,7 @@
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="flashTitle"> 标题闪烁</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="pauseOthers"> 完成后暂停其它视频</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoMute"> 自动静音视频</label>',
+            '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoNext"> 播完自动下一集</label>',
             '<label style="display:block;margin:10px 0 2px">音量 <span data-v></span></label>',
             '<input type="range" min="0" max="100" step="5" data-k="volume" style="width:100%">',
             '<div style="display:flex;gap:8px;margin-top:12px">',

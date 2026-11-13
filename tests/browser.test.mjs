@@ -54,6 +54,7 @@ const again = grab('RESULT again');
 const premute = grab('RESULT premute');
 const mute = grab('RESULT mute');
 const unmute = grab('RESULT unmute');
+const next = grab('RESULT next');
 
 const fail = [];
 if (!/muted=false/.test(premute)) { fail.push('播放前不该是静音的：' + premute); }
@@ -64,6 +65,7 @@ if (!/notify=1/.test(end)) { fail.push('播完应发出 1 条通知，实际：'
 if (end && /osc=0/.test(end)) { fail.push('播完应响铃，实际未创建任何音符：' + end); }
 if (!/body=.+·.+/.test(end)) { fail.push('通知正文应含片名与时长：' + end); }
 if (again && !/notify=1/.test(again)) { fail.push('重复的 ended 不应再次提醒：' + again); }
+if (!/clicks=1/.test(next)) { fail.push('播完后应点一次「下一集」，实际：' + (next || '(无输出)')); }
 
 console.log('browser:', browser);
 console.log(' ', premute || '(no premute line)');
@@ -72,6 +74,7 @@ console.log(' ', unmute || '(no unmute line)');
 console.log(' ', mid || '(no mid line)');
 console.log(' ', end || '(no end line)');
 console.log(' ', again || '(no again line)');
+console.log(' ', next || '(no next line)');
 
 if (fail.length) {
     console.log('\nFAILED:');
