@@ -1,0 +1,14 @@
+{
+  "name": "video-finish-watcher",
+  "version": "1.0.0",
+  "description": "网页视频播放完成后响铃并通知的油猴脚本（Tampermonkey / Violentmonkey）",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node tests/core.test.cjs",
+    "check": "node --check src/core.js && node --check src/ui.js && node build.mjs && node --check dist/video-finish-watcher.user.js"
+  },
+  "keywords": ["userscript", "tampermonkey", "video", "notification", "reminder"],
+  "author": "Sherling1024",
+  "license": "MIT"
+}

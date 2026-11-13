@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>vfw harness</title>
+</head>
+<body>
+<!-- 无浏览器依赖的桩：把 AudioContext / Notification 换成可观测的假实现 -->
+<script>
+(function () {
+    window.__vfw = { oscillators: 0, notes: [], notifications: [] };
+
+    function FakeGain() {
+        this.gain = { setValueAtTime: function () { }, exponentialRampToValueAtTime: function () { } };
+    }
+    FakeGain.prototype.connect = function () { };
+
+    function FakeOsc() {
+        this.type = '';
+        this.frequency = { setValueAtTime: function (f) { window.__vfw.notes.push(f); } };
+    }
+    FakeOsc.prototype.connect = function () { };
+    FakeOsc.prototype.start = function () { window.__vfw.oscillators += 1; };
+    FakeOsc.prototype.stop = function () { };
+
+    window.AudioContext = function () {
+        this.state = 'running';
+        this.currentTime = 0;
+        this.destination = {};
+    };
+    window.AudioContext.prototype.resume = function () { return Promise.resolve(); };
+    window.AudioContext.prototype.createOscillator = function () { return new FakeOsc(); };
+    window.AudioContext.prototype.createGain = function () { return new FakeGain(); };
+
+    window.Notification = function (title, opts) {
+        window.__vfw.notifications.push({ title: title, body: opts && opts.body });
+        this.onclick = null;
+    };
+    window.Notification.permission = 'granted';
+    window.Notification.requestPermission = function () { return Promise.resolve('granted'); };
+    window.Notification.prototype.close = function () { };
+})();
+</script>
+
+<pre id="log">boot</pre>
+<video id="v" width="16" height="16" muted></video>
+
+<script>
+(function () {
+    var st = { duration: 600, currentTime: 0, ended: false, paused: true, seeking: false, loop: false, muted: true };
+    window.__st = st;
+    var v = document.getElementById('v');
+    ['duration', 'currentTime', 'ended', 'paused', 'seeking', 'loop', 'muted'].forEach(function (k) {
+        Object.defineProperty(v, k, { get: function () { return st[k]; }, configurable: true });
+    });
+})();
+</script>
+
+<script src="../dist/video-finish-watcher.user.js"></script>
+
+<script>
+(function () {
+    var st = window.__st;
+    function fire(name) {
+        var v = document.getElementById('v');
+        v.dispatchEvent(new Event(name));
+    }
+    function report(line) {
+        var log = document.getElementById('log');
+        log.textContent = (log.textContent === 'boot' ? '' : log.textContent + '\n') + line;
+        document.documentElement.setAttribute('data-result', line);
+    }
+
+    setTimeout(function () {
+        // 1) 播到 598s：不应有任何提醒
+        st.paused = false;
+        st.currentTime = 598;
+        fire('timeupdate');
+        report('RESULT mid osc=' + window.__vfw.oscillators + ' notify=' + window.__vfw.notifications.length);
+
+        // 2) 播完
+        st.currentTime = 600;
+        st.ended = true;
+        st.paused = true;
+        fire('timeupdate');
+        fire('ended');
+        setTimeout(function () {
+            report('RESULT end osc=' + window.__vfw.oscillators +
+                ' notify=' + window.__vfw.notifications.length +
+                ' body=' + (window.__vfw.notifications[0] && window.__vfw.notifications[0].body));
+            // 3) 重复事件不应再次提醒
+            fire('ended');
+            setTimeout(function () {
+                report('RESULT again osc=' + window.__vfw.oscillators +
+                    ' notify=' + window.__vfw.notifications.length);
+                report('DONE');
+            }, 120);
+        }, 120);
+    }, 300);
+})();
+</script>
+</body>
+</html>
