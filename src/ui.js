@@ -182,6 +182,27 @@
         if (panelRefresh) { panelRefresh(); }
     }
 
+    // ---------------- 自动静音 ----------------
+
+    var userUnmuted = new WeakSet();   // 用户自己取消过静音的视频，之后不再强行静音
+
+    function maybeMute(video) {
+        var rec = videos.get(video);
+        if (!rec) { return; }
+        var want = VFW.shouldAutoMute({
+            enabled: cfg.enabled,
+            autoMute: cfg.autoMute,
+            muted: !!video.muted,
+            ended: !!video.ended,
+            userUnmuted: userUnmuted.has(video)
+        });
+        if (!want) { return; }
+        try {
+            video.muted = true;
+            rec.mutedByUs = true;
+        } catch (e) { /* 某些源不允许改 muted */ }
+    }
+
     function tickVideo(video) {
         var rec = videos.get(video);
         if (!rec) { return; }
@@ -215,6 +236,23 @@
         video.addEventListener('loadstart', onLoad, { passive: true });
         video.addEventListener('emptied', onLoad, { passive: true });
         rec.listeners.push(['loadstart', onLoad], ['emptied', onLoad]);
+
+        // 一开始播放就静音（抢在出声之前）
+        var onMute = function () { maybeMute(video); };
+        ['play', 'playing', 'loadedmetadata'].forEach(function (name) {
+            video.addEventListener(name, onMute, { passive: true });
+            rec.listeners.push([name, onMute]);
+        });
+
+        // 我们静音之后又被解除 → 视为用户主动要声音，这个视频不再强行静音
+        var onVolume = function () {
+            if (!video.muted && rec.mutedByUs) {
+                rec.mutedByUs = false;
+                userUnmuted.add(video);
+            }
+        };
+        video.addEventListener('volumechange', onVolume, { passive: true });
+        rec.listeners.push(['volumechange', onVolume]);
     }
 
     function scan() {
@@ -276,6 +314,7 @@
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="notify"> 系统通知</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="flashTitle"> 标题闪烁</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="pauseOthers"> 完成后暂停其它视频</label>',
+            '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoMute"> 自动静音视频</label>',
             '<label style="display:block;margin:10px 0 2px">音量 <span data-v></span></label>',
             '<input type="range" min="0" max="100" step="5" data-k="volume" style="width:100%">',
             '<div style="display:flex;gap:8px;margin-top:12px">',
@@ -340,12 +379,21 @@
         }
     }
 
+    var lastAutoMute = cfg.autoMute;
+
     function applyConfig() {
+        // 重新打开「自动静音」时，把「用户取消过静音」的记忆清空，让功能重新生效
+        if (cfg.autoMute && !lastAutoMute) { userUnmuted = new WeakSet(); }
+        lastAutoMute = cfg.autoMute;
+
         // 配置变了：把新配置推给所有已挂载的判定器
         for (var i = 0; i < mounted.length; i++) {
             try { mounted[i].rec.watcher.setConfig(cfg); } catch (e) { }
         }
         scan();
+        if (cfg.autoMute) {
+            document.querySelectorAll('video').forEach(function (v) { maybeMute(v); });
+        }
     }
 
     window.addEventListener('keydown', function (e) {

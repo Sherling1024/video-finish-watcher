@@ -43,15 +43,21 @@
 </script>
 
 <pre id="log">boot</pre>
-<video id="v" width="16" height="16" muted></video>
+<video id="v" width="16" height="16"></video>
 
 <script>
 (function () {
-    var st = { duration: 600, currentTime: 0, ended: false, paused: true, seeking: false, loop: false, muted: true };
+    var st = { duration: 600, currentTime: 0, ended: false, paused: true, seeking: false, loop: false, muted: false };
     window.__st = st;
     var v = document.getElementById('v');
-    ['duration', 'currentTime', 'ended', 'paused', 'seeking', 'loop', 'muted'].forEach(function (k) {
+    ['duration', 'currentTime', 'ended', 'paused', 'seeking', 'loop'].forEach(function (k) {
         Object.defineProperty(v, k, { get: function () { return st[k]; }, configurable: true });
+    });
+    // muted 需要可写：自动静音会赋值，用户取消静音由测试脚本赋值
+    Object.defineProperty(v, 'muted', {
+        configurable: true,
+        get: function () { return st.muted; },
+        set: function (val) { st.muted = !!val; }
     });
 })();
 </script>
@@ -61,10 +67,8 @@
 <script>
 (function () {
     var st = window.__st;
-    function fire(name) {
-        var v = document.getElementById('v');
-        v.dispatchEvent(new Event(name));
-    }
+    var v = document.getElementById('v');
+    function fire(name) { v.dispatchEvent(new Event(name)); }
     function report(line) {
         var log = document.getElementById('log');
         log.textContent = (log.textContent === 'boot' ? '' : log.textContent + '\n') + line;
@@ -72,6 +76,17 @@
     }
 
     setTimeout(function () {
+        // 0) 自动静音：一播放就该被静音
+        report('RESULT premute muted=' + st.muted);
+        fire('play');
+        report('RESULT mute muted=' + st.muted);
+
+        // 0b) 用户手动取消静音 → 之后再播放不该被强行静音
+        st.muted = false;
+        fire('volumechange');
+        fire('play');
+        report('RESULT unmute muted=' + st.muted);
+
         // 1) 播到 598s：不应有任何提醒
         st.paused = false;
         st.currentTime = 598;

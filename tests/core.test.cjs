@@ -137,8 +137,24 @@ test('通知正文带时长', () => {
     assert.equal(VFW.describeFinish('  ', null), '视频');
 });
 
-console.log('createDeduper');
-test('窗口内只放行一次', () => {
+console.log('shouldAutoMute');
+test('开着自动静音、有声、没播完 → 静音', () => {
+    assert.equal(VFW.shouldAutoMute({ enabled: true, autoMute: true, muted: false, ended: false }), true);
+});
+test('已经是静音的就不动手', () => {
+    assert.equal(VFW.shouldAutoMute({ enabled: true, autoMute: true, muted: true }), false);
+});
+test('用户自己取消过静音 → 尊重用户', () => {
+    assert.equal(VFW.shouldAutoMute({ enabled: true, autoMute: true, userUnmuted: true }), false);
+});
+test('播完了 / 功能关了 / 总开关关了都不动手', () => {
+    assert.equal(VFW.shouldAutoMute({ enabled: true, autoMute: true, ended: true }), false);
+    assert.equal(VFW.shouldAutoMute({ enabled: true, autoMute: false }), false);
+    assert.equal(VFW.shouldAutoMute({ enabled: false, autoMute: true }), false);
+    assert.equal(VFW.shouldAutoMute(null), false);
+});
+
+console.log('createDeduper');test('窗口内只放行一次', () => {
     const d = VFW.createDeduper(2000);
     assert.equal(d(1000), true);
     assert.equal(d(1500), false);

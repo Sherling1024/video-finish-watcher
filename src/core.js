@@ -17,7 +17,9 @@
         minDurationSec: 20,   // 短于此长度的视频不提醒（过滤广告 / 预览 / 动图视频）
         notify: true,         // 系统通知
         flashTitle: true,     // 标签页标题闪烁
-        pauseOthers: true     // 完成后暂停同页其它正在播的视频
+        pauseOthers: true,    // 完成后暂停同页其它正在播的视频
+        autoMute: true,       // 视频一开始播放就自动静音（用户手动取消静音后不再强行静音）
+        autoNext: false       // 播完后自动点击「下一集 / 下一个视频」
     };
 
     var LIMITS = {
@@ -48,6 +50,8 @@
         out.notify = src.notify === undefined ? DEFAULT_CONFIG.notify : !!src.notify;
         out.flashTitle = src.flashTitle === undefined ? DEFAULT_CONFIG.flashTitle : !!src.flashTitle;
         out.pauseOthers = src.pauseOthers === undefined ? DEFAULT_CONFIG.pauseOthers : !!src.pauseOthers;
+        out.autoMute = src.autoMute === undefined ? DEFAULT_CONFIG.autoMute : !!src.autoMute;
+        out.autoNext = src.autoNext === undefined ? DEFAULT_CONFIG.autoNext : !!src.autoNext;
         out.volume = clampIn(src.volume, LIMITS.volume, DEFAULT_CONFIG.volume);
         out.ringCount = Math.round(clampIn(src.ringCount, LIMITS.ringCount, DEFAULT_CONFIG.ringCount));
         out.thresholdSec = clampIn(src.thresholdSec, LIMITS.thresholdSec, DEFAULT_CONFIG.thresholdSec);
@@ -180,11 +184,76 @@
         };
     }
 
+    // ---------------- 自动静音 ----------------
+
+    /**
+     * 要不要把这个视频静音。
+     * 规则：功能开着、没播完、现在有声、而且不是用户自己取消过静音 —— 才动手。
+     *
+     * @param {object} state { enabled, autoMute, muted, ended, userUnmuted }
+     */
+    function shouldAutoMute(state) {
+        var s = state || {};
+        if (!s.enabled || !s.autoMute) { return false; }
+        if (s.ended) { return false; }
+        if (s.muted) { return false; }
+        if (s.userUnmuted) { return false; }
+        return true;
+    }
+
+    // ---------------- 自动连播 ----------------
+
+    var NEXT_LABELS = [
+        '下一集', '下一期', '下一话', '下一章', '下一个视频', '下一个', '下一段',
+        '下一p', 'next episode', 'next video', 'next part', 'play next', 'up next', 'next'
+    ];
+    var PREV_LABELS = ['上一集', '上一期', '上一话', '上一个', 'previous', 'prev', '上一p'];
+
+    /**
+     * 从一个按钮/链接的文案（或 aria-label / title）里认出「下一个视频」。
+     * 认出来返回命中的关键词，认不出返回 null。
+     * 太长的文案一般是视频标题/简介，直接排除，避免误点。
+     */
+    function matchNextLabel(raw) {
+        var t = String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!t || t.length > 24) { return null; }
+        for (var i = 0; i < PREV_LABELS.length; i++) {
+            if (t.indexOf(PREV_LABELS[i].toLowerCase()) >= 0) { return null; }
+        }
+        for (var j = 0; j < NEXT_LABELS.length; j++) {
+            var label = NEXT_LABELS[j].toLowerCase();
+            if (/[a-z]/.test(label)) {
+                // 英文关键词要求整词，免得 next 匹配到 context、nextjs 之类
+                if (new RegExp('(^|[^a-z])' + label + '($|[^a-z])').test(t)) { return label; }
+            } else if (t.indexOf(label) >= 0) {
+                return label;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 这次「播完」该不该顺手点下一集。
+     * @param {object} state { enabled, autoNext, clickedForThisVideo, lastClickAt, now, windowMs }
+     */
+    function shouldAutoNext(state) {
+        var s = state || {};
+        if (!s.enabled || !s.autoNext) { return false; }
+        if (s.clickedForThisVideo) { return false; }
+        var span = num(s.windowMs, 8000);
+        var last = num(s.lastClickAt, -Infinity);
+        if (num(s.now, Date.now()) - last < span) { return false; }
+        return true;
+    }
+
     return {
         DEFAULT_CONFIG: DEFAULT_CONFIG,
         normalizeConfig: normalizeConfig,
         createWatcher: createWatcher,
         createDeduper: createDeduper,
+        shouldAutoMute: shouldAutoMute,
+        shouldAutoNext: shouldAutoNext,
+        matchNextLabel: matchNextLabel,
         buildRingPattern: buildRingPattern,
         describeFinish: describeFinish,
         formatClock: formatClock

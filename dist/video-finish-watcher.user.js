@@ -2,7 +2,7 @@
 // @name         视频播放完成提醒
 // @name:en      Video Finish Watcher
 // @namespace    https://github.com/Sherling1024/video-finish-watcher
-// @version      1.0.0
+// @version      1.1.0
 // @description  网页视频播放结束后响铃 + 系统通知 + 标题闪烁
 // @description:en  Ring a bell and notify when a web video finishes playing.
 // @author       Sherling1024
@@ -33,7 +33,9 @@
         minDurationSec: 20,   // 短于此长度的视频不提醒（过滤广告 / 预览 / 动图视频）
         notify: true,         // 系统通知
         flashTitle: true,     // 标签页标题闪烁
-        pauseOthers: true     // 完成后暂停同页其它正在播的视频
+        pauseOthers: true,    // 完成后暂停同页其它正在播的视频
+        autoMute: true,       // 视频一开始播放就自动静音（用户手动取消静音后不再强行静音）
+        autoNext: false       // 播完后自动点击「下一集 / 下一个视频」
     };
 
     var LIMITS = {
@@ -64,6 +66,8 @@
         out.notify = src.notify === undefined ? DEFAULT_CONFIG.notify : !!src.notify;
         out.flashTitle = src.flashTitle === undefined ? DEFAULT_CONFIG.flashTitle : !!src.flashTitle;
         out.pauseOthers = src.pauseOthers === undefined ? DEFAULT_CONFIG.pauseOthers : !!src.pauseOthers;
+        out.autoMute = src.autoMute === undefined ? DEFAULT_CONFIG.autoMute : !!src.autoMute;
+        out.autoNext = src.autoNext === undefined ? DEFAULT_CONFIG.autoNext : !!src.autoNext;
         out.volume = clampIn(src.volume, LIMITS.volume, DEFAULT_CONFIG.volume);
         out.ringCount = Math.round(clampIn(src.ringCount, LIMITS.ringCount, DEFAULT_CONFIG.ringCount));
         out.thresholdSec = clampIn(src.thresholdSec, LIMITS.thresholdSec, DEFAULT_CONFIG.thresholdSec);
@@ -196,11 +200,76 @@
         };
     }
 
+    // ---------------- 自动静音 ----------------
+
+    /**
+     * 要不要把这个视频静音。
+     * 规则：功能开着、没播完、现在有声、而且不是用户自己取消过静音 —— 才动手。
+     *
+     * @param {object} state { enabled, autoMute, muted, ended, userUnmuted }
+     */
+    function shouldAutoMute(state) {
+        var s = state || {};
+        if (!s.enabled || !s.autoMute) { return false; }
+        if (s.ended) { return false; }
+        if (s.muted) { return false; }
+        if (s.userUnmuted) { return false; }
+        return true;
+    }
+
+    // ---------------- 自动连播 ----------------
+
+    var NEXT_LABELS = [
+        '下一集', '下一期', '下一话', '下一章', '下一个视频', '下一个', '下一段',
+        '下一p', 'next episode', 'next video', 'next part', 'play next', 'up next', 'next'
+    ];
+    var PREV_LABELS = ['上一集', '上一期', '上一话', '上一个', 'previous', 'prev', '上一p'];
+
+    /**
+     * 从一个按钮/链接的文案（或 aria-label / title）里认出「下一个视频」。
+     * 认出来返回命中的关键词，认不出返回 null。
+     * 太长的文案一般是视频标题/简介，直接排除，避免误点。
+     */
+    function matchNextLabel(raw) {
+        var t = String(raw || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!t || t.length > 24) { return null; }
+        for (var i = 0; i < PREV_LABELS.length; i++) {
+            if (t.indexOf(PREV_LABELS[i].toLowerCase()) >= 0) { return null; }
+        }
+        for (var j = 0; j < NEXT_LABELS.length; j++) {
+            var label = NEXT_LABELS[j].toLowerCase();
+            if (/[a-z]/.test(label)) {
+                // 英文关键词要求整词，免得 next 匹配到 context、nextjs 之类
+                if (new RegExp('(^|[^a-z])' + label + '($|[^a-z])').test(t)) { return label; }
+            } else if (t.indexOf(label) >= 0) {
+                return label;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 这次「播完」该不该顺手点下一集。
+     * @param {object} state { enabled, autoNext, clickedForThisVideo, lastClickAt, now, windowMs }
+     */
+    function shouldAutoNext(state) {
+        var s = state || {};
+        if (!s.enabled || !s.autoNext) { return false; }
+        if (s.clickedForThisVideo) { return false; }
+        var span = num(s.windowMs, 8000);
+        var last = num(s.lastClickAt, -Infinity);
+        if (num(s.now, Date.now()) - last < span) { return false; }
+        return true;
+    }
+
     return {
         DEFAULT_CONFIG: DEFAULT_CONFIG,
         normalizeConfig: normalizeConfig,
         createWatcher: createWatcher,
         createDeduper: createDeduper,
+        shouldAutoMute: shouldAutoMute,
+        shouldAutoNext: shouldAutoNext,
+        matchNextLabel: matchNextLabel,
         buildRingPattern: buildRingPattern,
         describeFinish: describeFinish,
         formatClock: formatClock
@@ -392,6 +461,27 @@
         if (panelRefresh) { panelRefresh(); }
     }
 
+    // ---------------- 自动静音 ----------------
+
+    var userUnmuted = new WeakSet();   // 用户自己取消过静音的视频，之后不再强行静音
+
+    function maybeMute(video) {
+        var rec = videos.get(video);
+        if (!rec) { return; }
+        var want = VFW.shouldAutoMute({
+            enabled: cfg.enabled,
+            autoMute: cfg.autoMute,
+            muted: !!video.muted,
+            ended: !!video.ended,
+            userUnmuted: userUnmuted.has(video)
+        });
+        if (!want) { return; }
+        try {
+            video.muted = true;
+            rec.mutedByUs = true;
+        } catch (e) { /* 某些源不允许改 muted */ }
+    }
+
     function tickVideo(video) {
         var rec = videos.get(video);
         if (!rec) { return; }
@@ -425,6 +515,23 @@
         video.addEventListener('loadstart', onLoad, { passive: true });
         video.addEventListener('emptied', onLoad, { passive: true });
         rec.listeners.push(['loadstart', onLoad], ['emptied', onLoad]);
+
+        // 一开始播放就静音（抢在出声之前）
+        var onMute = function () { maybeMute(video); };
+        ['play', 'playing', 'loadedmetadata'].forEach(function (name) {
+            video.addEventListener(name, onMute, { passive: true });
+            rec.listeners.push([name, onMute]);
+        });
+
+        // 我们静音之后又被解除 → 视为用户主动要声音，这个视频不再强行静音
+        var onVolume = function () {
+            if (!video.muted && rec.mutedByUs) {
+                rec.mutedByUs = false;
+                userUnmuted.add(video);
+            }
+        };
+        video.addEventListener('volumechange', onVolume, { passive: true });
+        rec.listeners.push(['volumechange', onVolume]);
     }
 
     function scan() {
@@ -486,6 +593,7 @@
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="notify"> 系统通知</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="flashTitle"> 标题闪烁</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="pauseOthers"> 完成后暂停其它视频</label>',
+            '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoMute"> 自动静音视频</label>',
             '<label style="display:block;margin:10px 0 2px">音量 <span data-v></span></label>',
             '<input type="range" min="0" max="100" step="5" data-k="volume" style="width:100%">',
             '<div style="display:flex;gap:8px;margin-top:12px">',
@@ -550,12 +658,21 @@
         }
     }
 
+    var lastAutoMute = cfg.autoMute;
+
     function applyConfig() {
+        // 重新打开「自动静音」时，把「用户取消过静音」的记忆清空，让功能重新生效
+        if (cfg.autoMute && !lastAutoMute) { userUnmuted = new WeakSet(); }
+        lastAutoMute = cfg.autoMute;
+
         // 配置变了：把新配置推给所有已挂载的判定器
         for (var i = 0; i < mounted.length; i++) {
             try { mounted[i].rec.watcher.setConfig(cfg); } catch (e) { }
         }
         scan();
+        if (cfg.autoMute) {
+            document.querySelectorAll('video').forEach(function (v) { maybeMute(v); });
+        }
     }
 
     window.addEventListener('keydown', function (e) {

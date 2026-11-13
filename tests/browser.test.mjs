@@ -51,8 +51,14 @@ function grab(tag) {
 const mid = grab('RESULT mid');
 const end = grab('RESULT end');
 const again = grab('RESULT again');
+const premute = grab('RESULT premute');
+const mute = grab('RESULT mute');
+const unmute = grab('RESULT unmute');
 
 const fail = [];
+if (!/muted=false/.test(premute)) { fail.push('播放前不该是静音的：' + premute); }
+if (!/muted=true/.test(mute)) { fail.push('一播放就应被自动静音：' + (mute || '(无输出)')); }
+if (!/muted=false/.test(unmute)) { fail.push('用户取消静音后不该再被强行静音：' + (unmute || '(无输出)')); }
 if (!/osc=0 notify=0/.test(mid)) { fail.push('播放中途不应提醒，实际：' + (mid || '(无输出)')); }
 if (!/notify=1/.test(end)) { fail.push('播完应发出 1 条通知，实际：' + (end || '(无输出)')); }
 if (end && /osc=0/.test(end)) { fail.push('播完应响铃，实际未创建任何音符：' + end); }
@@ -60,6 +66,9 @@ if (!/body=.+·.+/.test(end)) { fail.push('通知正文应含片名与时长：'
 if (again && !/notify=1/.test(again)) { fail.push('重复的 ended 不应再次提醒：' + again); }
 
 console.log('browser:', browser);
+console.log(' ', premute || '(no premute line)');
+console.log(' ', mute || '(no mute line)');
+console.log(' ', unmute || '(no unmute line)');
 console.log(' ', mid || '(no mid line)');
 console.log(' ', end || '(no end line)');
 console.log(' ', again || '(no again line)');
