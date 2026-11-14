@@ -191,6 +191,57 @@ test('功能关闭时不动手', () => {
     assert.equal(VFW.shouldAutoNext({ enabled: false, autoNext: true }), false);
 });
 
+console.log('雨课堂特别版：站点识别');
+test('yuketang.cn 各子域都算', () => {
+    assert.equal(VFW.isYuketangHost('scut.yuketang.cn'), true);
+    assert.equal(VFW.isYuketangHost('www.yuketang.cn:443'), true);
+    assert.equal(VFW.isYuketangHost('yuketang.cn'), true);
+    assert.equal(VFW.isYuketangHost('YUKETANG.CN'), true);
+});
+test('长得像但不同的域不算', () => {
+    assert.equal(VFW.isYuketangHost('yuketang.cn.evil.com'), false);
+    assert.equal(VFW.isYuketangHost('notyuketang.cn'), false);
+    assert.equal(VFW.isYuketangHost('bilibili.com'), false);
+    assert.equal(VFW.isYuketangHost(''), false);
+    assert.equal(VFW.isYuketangHost(null), false);
+});
+
+console.log('shouldResume');
+test('播到一半被暂停 → 续播', () => {
+    assert.equal(VFW.shouldResume({ enabled: true, paused: true, ended: false, currentTime: 120, duration: 600, now: 1000 }), true);
+});
+test('正在播 / 已播完 / 还没开始都不管', () => {
+    assert.equal(VFW.shouldResume({ enabled: true, paused: false, currentTime: 120, duration: 600 }), false);
+    assert.equal(VFW.shouldResume({ enabled: true, paused: true, ended: true, currentTime: 600, duration: 600 }), false);
+    assert.equal(VFW.shouldResume({ enabled: true, paused: true, currentTime: 0, duration: 600 }), false);
+    assert.equal(VFW.shouldResume({ enabled: true, paused: true, currentTime: 599.5, duration: 600 }), false);
+});
+test('冷却时间与重试次数上限', () => {
+    const base = { enabled: true, paused: true, currentTime: 120, duration: 600 };
+    const st = (o) => VFW.shouldResume(Object.assign({}, base, o));
+    assert.equal(st({ lastAttemptAt: 900, now: 1000 }), false);
+    assert.equal(st({ lastAttemptAt: 1000, now: 4000 }), true);
+    assert.equal(st({ attempts: 5, now: 4000 }), false);
+    assert.equal(st({ enabled: false, now: 4000 }), false);
+    assert.equal(st({ duration: NaN, now: 4000 }), false);
+});
+
+console.log('findCurrentIndex / pickNextIndex');
+test('标题精确匹配优先于包含匹配', () => {
+    const labels = ['1.1 绪论', '1.10 小结', '1.2 方法'];
+    assert.equal(VFW.findCurrentIndex(labels, '1.10 小结'), 1);
+    assert.equal(VFW.findCurrentIndex(['1.1 绪论', '1.10 小结'], '1.1'), 0, '包含匹配不会错跳到 1.10');
+    assert.equal(VFW.findCurrentIndex(labels, '2.5 不存在'), -1);
+    assert.equal(VFW.findCurrentIndex([], 'x'), -1);
+});
+test('下一项：末尾返回 null', () => {
+    assert.equal(VFW.pickNextIndex(3, 0), 1);
+    assert.equal(VFW.pickNextIndex(3, 1), 2);
+    assert.equal(VFW.pickNextIndex(3, 2), null);
+    assert.equal(VFW.pickNextIndex(3, -1), 0);
+    assert.equal(VFW.pickNextIndex(0, 0), null);
+});
+
 console.log('createDeduper');test('窗口内只放行一次', () => {
     const d = VFW.createDeduper(2000);
     assert.equal(d(1000), true);

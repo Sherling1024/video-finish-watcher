@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
+    "build:special": "node build.mjs special",
     "test": "node tests/core.test.cjs",
     "test:browser": "node tests/browser.test.mjs",
-    "check": "node --check src/core.js && node --check src/ui.js && node build.mjs && node --check dist/video-finish-watcher.user.js"
+    "test:yuketang": "node tests/yuketang.test.mjs",
+    "check": "node --check src/core.js && node --check src/ui.js && node --check src/site-yuketang.js && node build.mjs && node build.mjs special && node --check dist/video-finish-watcher.user.js && node --check dist/video-finish-watcher-special.user.js"
   },
   "keywords": [
     "userscript",

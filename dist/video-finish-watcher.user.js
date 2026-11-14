@@ -35,7 +35,11 @@
         flashTitle: true,     // 标签页标题闪烁
         pauseOthers: true,    // 完成后暂停同页其它正在播的视频
         autoMute: true,       // 视频一开始播放就自动静音（用户手动取消静音后不再强行静音）
-        autoNext: true        // 播完后自动点击「下一集 / 下一个视频」
+        autoNext: true,       // 播完后自动点击「下一集 / 下一个视频」
+        ytForceMute: true,    // 雨课堂特别版：无论如何都静音
+        ytAutoResume: true,   // 雨课堂特别版：视频停住就继续播
+        ytSkipNonVideo: true, // 雨课堂特别版：非视频项（讨论/课件）自动跳过
+        ytAutoAnswer: true    // 雨课堂特别版：选择题尝试自动作答
     };
 
     var LIMITS = {
@@ -68,6 +72,10 @@
         out.pauseOthers = src.pauseOthers === undefined ? DEFAULT_CONFIG.pauseOthers : !!src.pauseOthers;
         out.autoMute = src.autoMute === undefined ? DEFAULT_CONFIG.autoMute : !!src.autoMute;
         out.autoNext = src.autoNext === undefined ? DEFAULT_CONFIG.autoNext : !!src.autoNext;
+        out.ytForceMute = src.ytForceMute === undefined ? DEFAULT_CONFIG.ytForceMute : !!src.ytForceMute;
+        out.ytAutoResume = src.ytAutoResume === undefined ? DEFAULT_CONFIG.ytAutoResume : !!src.ytAutoResume;
+        out.ytSkipNonVideo = src.ytSkipNonVideo === undefined ? DEFAULT_CONFIG.ytSkipNonVideo : !!src.ytSkipNonVideo;
+        out.ytAutoAnswer = src.ytAutoAnswer === undefined ? DEFAULT_CONFIG.ytAutoAnswer : !!src.ytAutoAnswer;
         out.volume = clampIn(src.volume, LIMITS.volume, DEFAULT_CONFIG.volume);
         out.ringCount = Math.round(clampIn(src.ringCount, LIMITS.ringCount, DEFAULT_CONFIG.ringCount));
         out.thresholdSec = clampIn(src.thresholdSec, LIMITS.thresholdSec, DEFAULT_CONFIG.thresholdSec);
@@ -262,8 +270,78 @@
         return true;
     }
 
+    // ---------------- 站点适配（雨课堂特别版） ----------------
+
+    /** 是否雨课堂站点（scut.yuketang.cn / www.yuketang.cn / yuketang.cn 都算）。 */
+    function isYuketangHost(host) {
+        var h = String(host || '').toLowerCase().replace(/:\d+$/, '');
+        if (!h) { return false; }
+        return h === 'yuketang.cn' || /(^|\.)yuketang\.cn$/.test(h);
+    }
+
+    /**
+     * 视频「停住」了要不要替用户继续播。
+     * 只在「播到一半被暂停」时介入：刚开头（换集重载）和片尾都不管，避免和播放器抢。
+     *
+     * @param {object} state { enabled, paused, ended, currentTime, duration,
+     *                         attempts, maxAttempts, lastAttemptAt, now, cooldownMs }
+     */
+    function shouldResume(state) {
+        var s = state || {};
+        if (!s.enabled) { return false; }
+        if (!s.paused || s.ended) { return false; }
+        var dur = num(s.duration, NaN);
+        if (!isFinite(dur) || dur <= 0) { return false; }
+        var cur = num(s.currentTime, 0);
+        if (cur <= 0.05) { return false; }
+        if (dur - cur <= 1) { return false; }
+        if (num(s.attempts, 0) >= num(s.maxAttempts, 5)) { return false; }
+        var now = num(s.now, Date.now());
+        var last = num(s.lastAttemptAt, -Infinity);
+        if (now - last < num(s.cooldownMs, 2500)) { return false; }
+        return true;
+    }
+
+    /**
+     * 在一串目录标题里找出「当前正在学的那一项」，找不到返回 -1。
+     * 精确相等优先，其次才是包含关系，避免「1.1」错配到「1.10」。
+     */
+    function findCurrentIndex(labels, needle) {
+        var list = labels || [];
+        var n = String(needle || '').replace(/\s+/g, ' ').trim();
+        if (!n) { return -1; }
+        var i, t;
+        for (i = 0; i < list.length; i++) {
+            t = String(list[i] || '').replace(/\s+/g, ' ').trim();
+            if (t && t === n) { return i; }
+        }
+        for (i = 0; i < list.length; i++) {
+            t = String(list[i] || '').replace(/\s+/g, ' ').trim();
+            if (!t || t.length < 2) { continue; }
+            if (t.indexOf(n) >= 0 || n.indexOf(t) >= 0) { return i; }
+        }
+        return -1;
+    }
+
+    /**
+     * 目录里的下一项；到末尾返回 null（课程学完就不要再点了）。
+     * @param {number} total 目录项总数
+     * @param {number} currentIndex 当前项下标（-1 表示没认出来）
+     */
+    function pickNextIndex(total, currentIndex) {
+        var n = Math.round(num(total, 0));
+        var i = Math.round(num(currentIndex, -1));
+        if (n <= 0) { return null; }
+        if (i < -1 || i >= n - 1) { return null; }
+        return i + 1;
+    }
+
     return {
         DEFAULT_CONFIG: DEFAULT_CONFIG,
+        isYuketangHost: isYuketangHost,
+        shouldResume: shouldResume,
+        findCurrentIndex: findCurrentIndex,
+        pickNextIndex: pickNextIndex,
         normalizeConfig: normalizeConfig,
         createWatcher: createWatcher,
         createDeduper: createDeduper,
@@ -290,6 +368,7 @@
     window.__VFW_UI_LOADED__ = true;
 
     var CONFIG_KEY = 'vfw:config';
+    var ytMode = VFW.isYuketangHost(location.hostname);
     var isTop = (function () {
         try { return window.top === window.self; } catch (e) { return false; }
     })();
@@ -469,6 +548,7 @@
     // ---------------- 自动静音 ----------------
 
     var userUnmuted = new WeakSet();   // 用户自己取消过静音的视频，之后不再强行静音
+    var forceMute = false;             // 雨课堂特别版：无论如何都静音（忽略「用户取消过」）
 
     function maybeMute(video) {
         var rec = videos.get(video);
@@ -478,7 +558,7 @@
             autoMute: cfg.autoMute,
             muted: !!video.muted,
             ended: !!video.ended,
-            userUnmuted: userUnmuted.has(video)
+            userUnmuted: forceMute ? false : userUnmuted.has(video)
         });
         if (!want) { return; }
         try {
@@ -565,6 +645,8 @@
     }
 
     function tryAutoNext(video) {
+        // 站点适配层（雨课堂特别版）自己有更准的「下一集」，别两边各点一次跳两集
+        if (window.__VFW_YT_OWN_NEXT__) { return false; }
         var allowed = VFW.shouldAutoNext({
             enabled: cfg.enabled,
             autoNext: cfg.autoNext,
@@ -696,6 +778,13 @@
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="pauseOthers"> 完成后暂停其它视频</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoMute"> 自动静音视频</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoNext"> 播完自动下一集</label>',
+            ytMode ? [
+                '<div style="margin:10px 0 2px;opacity:.6;font-size:12px">雨课堂特化</div>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytForceMute"> 无论如何静音</label>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytAutoResume"> 停住就继续播</label>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytSkipNonVideo"> 非视频项自动跳过</label>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytAutoAnswer"> 选择题尝试作答</label>'
+            ].join('') : '',
             '<label style="display:block;margin:10px 0 2px">音量 <span data-v></span></label>',
             '<input type="range" min="0" max="100" step="5" data-k="volume" style="width:100%">',
             '<div style="display:flex;gap:8px;margin-top:12px">',
@@ -798,5 +887,25 @@
         },
         testRing: testRing,
         rescan: scan
+    };
+
+    // 站点适配层（special 版才带 site-*.js）在这里接进主流程
+    window.__VFW_HOOKS__ = {
+        config: function () { return cfg; },
+        update: function (patch) {
+            for (var k in patch) { if (Object.prototype.hasOwnProperty.call(patch, k)) { cfg[k] = patch[k]; } }
+            saveConfig(cfg);
+            applyConfig();
+        },
+        setForceMute: function (on) { forceMute = !!on; document.querySelectorAll('video').forEach(function (v) { maybeMute(v); }); },
+        ring: ring,
+        notify: notify,
+        click: clickControl,
+        visible: isVisible,
+        labelOf: labelOf,
+        findNextControl: findNextControl,
+        videos: function () { return document.querySelectorAll('video'); },
+        restartFlash: function () { stopFlash(); startFlash(); },
+        refreshPanel: function () { if (panelRefresh) { panelRefresh(); } }
     };
 })();

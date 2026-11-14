@@ -11,6 +11,7 @@
     window.__VFW_UI_LOADED__ = true;
 
     var CONFIG_KEY = 'vfw:config';
+    var ytMode = VFW.isYuketangHost(location.hostname);
     var isTop = (function () {
         try { return window.top === window.self; } catch (e) { return false; }
     })();
@@ -190,6 +191,7 @@
     // ---------------- 自动静音 ----------------
 
     var userUnmuted = new WeakSet();   // 用户自己取消过静音的视频，之后不再强行静音
+    var forceMute = false;             // 雨课堂特别版：无论如何都静音（忽略「用户取消过」）
 
     function maybeMute(video) {
         var rec = videos.get(video);
@@ -199,7 +201,7 @@
             autoMute: cfg.autoMute,
             muted: !!video.muted,
             ended: !!video.ended,
-            userUnmuted: userUnmuted.has(video)
+            userUnmuted: forceMute ? false : userUnmuted.has(video)
         });
         if (!want) { return; }
         try {
@@ -286,6 +288,8 @@
     }
 
     function tryAutoNext(video) {
+        // 站点适配层（雨课堂特别版）自己有更准的「下一集」，别两边各点一次跳两集
+        if (window.__VFW_YT_OWN_NEXT__) { return false; }
         var allowed = VFW.shouldAutoNext({
             enabled: cfg.enabled,
             autoNext: cfg.autoNext,
@@ -417,6 +421,11 @@
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="pauseOthers"> 完成后暂停其它视频</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoMute"> 自动静音视频</label>',
             '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="autoNext"> 播完自动下一集</label>',
+            ytMode ? [
+                '<div style="margin:10px 0 2px;opacity:.6;font-size:12px">雨课堂特化</div>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytForceMute"> 无论如何静音</label>',
+                '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" data-k="ytAutoResume"> 停住就继续播</label>'
+            ].join('') : '',
             '<label style="display:block;margin:10px 0 2px">音量 <span data-v></span></label>',
             '<input type="range" min="0" max="100" step="5" data-k="volume" style="width:100%">',
             '<div style="display:flex;gap:8px;margin-top:12px">',
@@ -519,5 +528,25 @@
         },
         testRing: testRing,
         rescan: scan
+    };
+
+    // 站点适配层（special 版才带 site-*.js）在这里接进主流程
+    window.__VFW_HOOKS__ = {
+        config: function () { return cfg; },
+        update: function (patch) {
+            for (var k in patch) { if (Object.prototype.hasOwnProperty.call(patch, k)) { cfg[k] = patch[k]; } }
+            saveConfig(cfg);
+            applyConfig();
+        },
+        setForceMute: function (on) { forceMute = !!on; document.querySelectorAll('video').forEach(function (v) { maybeMute(v); }); },
+        ring: ring,
+        notify: notify,
+        click: clickControl,
+        visible: isVisible,
+        labelOf: labelOf,
+        findNextControl: findNextControl,
+        videos: function () { return document.querySelectorAll('video'); },
+        restartFlash: function () { stopFlash(); startFlash(); },
+        refreshPanel: function () { if (panelRefresh) { panelRefresh(); } }
     };
 })();

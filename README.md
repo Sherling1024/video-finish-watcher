@@ -28,6 +28,29 @@
 2. 打开 [`dist/video-finish-watcher.user.js`](dist/video-finish-watcher.user.js) 的 raw 链接，脚本管理器会弹出安装页，点「安装」。
 3. 随便打开一个带视频的页面，按 `Alt+Shift+V` 打开面板，点一次「通知授权」——浏览器要求通知权限必须由用户点击触发。
 
+## 雨课堂特别版（Special Edition）
+
+针对 `scut.yuketang.cn` 课程播放页做的特化版：**只在 yuketang.cn 上生效**，和普通版是两份独立的脚本。两个版本**只装一个**，同时装会响两遍铃。
+
+| 版本 | 能力 |
+| --- | --- |
+| **v1.5.0-special** | ① 无论如何默认静音 ② 目录里自动点下一集 ③ 视频停住就继续播 |
+| **v1.6.0-special** | 在 v1.5 之上再加 ④ 非视频项（讨论 / 习题）尝试自动作答，答不了就跳到下一项 |
+
+安装：打开 [Releases](https://github.com/Sherling1024/video-finish-watcher/releases)，在对应版本里点开 `video-finish-watcher-special.user.js` 装进脚本管理器即可。两个版本可以互相覆盖安装（同一个 `@namespace`），想换版本重装一次就行。
+
+### 它做了什么
+
+1. **无论如何静音**：雨课堂换集时播放器会把声音重新放出来，脚本在每次 `play` 前把 `muted` 压回去。面板里关掉「无论如何静音」，就退回普通版的行为（用户手动取消静音后不再强行静音）。
+2. **目录下一集**：播完后找到左侧目录里被高亮的那一项，点它的下一项；认不出高亮项时退回按文案找「下一节」。特化版会接管这件事，普通逻辑不再插手——否则两边各点一次会连跳两集。
+3. **停住就续播**：播到一半被暂停（切窗口、播放器自己暂停、缓冲卡住）时自动 `play()`。三档保险：用户 1.5 秒内动过鼠标/键盘就当是主动暂停、2.5 秒冷却、同一视频最多重试 4 次。
+
+面板（`Alt+Shift+V`）在雨课堂站点会多出「雨课堂特化」一栏，开关可以单独关。
+
+### 已知限制
+
+- 目录项的高亮 class 和播放器结构是按常见写法猜的（`active` / `current` / `selected` / `aria-current`…）。雨课堂改版后可能认不出当前项，此时退回「按文案找下一节」；实在找不到就只是不跳，不会乱点。
+- 「停住就续播」与用户主动暂停只隔 1.5 秒，手速快的话可能会被顶回去——临时需要暂停就在面板里关掉这一项。
 ## 用法
 
 - **不用做任何事**：页面里出现 `<video>` 就自动开始监听，SPA 换页、动态插入的视频也会被重新扫描（MutationObserver + 3 秒兜底）。
@@ -87,9 +110,11 @@
 ## 开发
 
 ```bash
-node build.mjs                 # src/core.js + src/ui.js → dist/*.user.js
-node tests/core.test.cjs       # 30 条纯逻辑单测（判定状态机 / 配置夹取 / 铃声序列 / 去重 / 自动静音 / 下一集识别）
+node build.mjs                          # 普通版：src/core.js + src/ui.js → dist/video-finish-watcher.user.js
+node build.mjs special 1.6.0-special    # 雨课堂特别版：再加 src/site-yuketang.js → dist/*-special.user.js
+node tests/core.test.cjs       # 37 条纯逻辑单测（判定状态机 / 配置夹取 / 铃声序列 / 去重 / 自动静音 / 下一集 / 续播 / 站点识别）
 node tests/browser.test.mjs    # 无头 Edge/Chrome 真跑一遍：自动静音 + 播完响铃 + 通知 + 自动连播只点一次
+node tests/yuketang.test.mjs   # 无头 Edge/Chrome：雨课堂特别版的静音 / 下一集 / 续播（加 --expect-extra 再测作答与跳过）
 ```
 
 找不到 Chrome/Edge 时浏览器测试会自动跳过。
@@ -97,6 +122,7 @@ node tests/browser.test.mjs    # 无头 Edge/Chrome 真跑一遍：自动静音 
 ```
 src/core.js     纯逻辑：配置归一化、播完判定状态机、铃声节奏、文案（可在 Node 里直接测）
 src/ui.js       DOM 装配：扫描 video、音频、通知、标题闪烁、设置面板
+src/site-yuketang.js  雨课堂特化：强制静音、目录下一集、停住续播（只有 special 构建才打包）
 build.mjs       把上面两个文件拼成带 UserScript 头的单文件
 tests/          单测 + 无头浏览器集成测试 + 测试页
 ```
@@ -105,6 +131,7 @@ tests/          单测 + 无头浏览器集成测试 + 测试页
 
 ## 更新日志
 
+- **v1.5.0-special** — 雨课堂特别版首个版本：无论如何静音、目录自动下一集、停住自动续播。
 - **v1.2.0** — 新增「播完自动下一集」：站点选择器 + 文案启发式找「下一个」控件，同一视频只点一次、8 秒内不连点。
 - **v1.1.0** — 新增「自动静音」：视频一开播就静音；手动取消静音的视频会被记住，不再强行静音；面板里可开关。
 - **v1.0.0** — 首个版本：三层播完判定、Web Audio 合成铃声、系统通知、标题闪烁、设置面板、广告/直播/循环过滤。

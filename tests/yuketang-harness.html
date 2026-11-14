@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>vfw yuketang harness</title>
+<style>
+    body { margin: 0; font: 13px/1.6 sans-serif; }
+    #list { width: 220px; list-style: none; margin: 0; padding: 8px; float: left; }
+    #list li { padding: 6px 8px; border: 1px solid #ddd; margin-bottom: 6px; cursor: pointer; }
+    #list li.active { background: #dff; border-color: #0aa; }
+    #stage { margin-left: 240px; }
+    video { width: 320px; height: 96px; background: #000; }
+    #quiz button, #quiz label { display: inline-block; }
+</style>
+</head>
+<body>
+<script>
+(function () {
+    window.__vfw = { oscillators: 0, notes: [], notifications: [] };
+
+    function FakeGain() {
+        this.gain = { setValueAtTime: function () { }, exponentialRampToValueAtTime: function () { } };
+    }
+    FakeGain.prototype.connect = function () { };
+
+    function FakeOsc() { this.type = ''; this.frequency = { setValueAtTime: function (f) { window.__vfw.notes.push(f); } }; }
+    FakeOsc.prototype.connect = function () { };
+    FakeOsc.prototype.start = function () { window.__vfw.oscillators += 1; };
+    FakeOsc.prototype.stop = function () { };
+
+    window.AudioContext = function () { this.state = 'running'; this.currentTime = 0; this.destination = {}; };
+    window.AudioContext.prototype.resume = function () { return Promise.resolve(); };
+    window.AudioContext.prototype.createOscillator = function () { return new FakeOsc(); };
+    window.AudioContext.prototype.createGain = function () { return new FakeGain(); };
+
+    window.Notification = function (title, opts) { window.__vfw.notifications.push({ title: title, body: opts && opts.body }); this.onclick = null; };
+    window.Notification.permission = 'granted';
+    window.Notification.requestPermission = function () { return Promise.resolve('granted'); };
+    window.Notification.prototype.close = function () { };
+
+    // 让站点适配层以为自己在雨课堂
+    window.__VFW_FORCE_YT__ = true;
+})();
+</script>
+
+<pre id="log">boot</pre>
+
+<ul id="list">
+    <li class="chapter-item active" data-i="0">1.1 绪论</li>
+    <li class="chapter-item" data-i="1">1.2 方法</li>
+    <li class="chapter-item" data-i="2">1.3 讨论题</li>
+    <li class="chapter-item" data-i="3">1.4 小结</li>
+</ul>
+
+<div id="stage">
+    <video id="v"></video>
+    <div id="quiz" style="display:none;margin-top:10px">
+        <label><input type="radio" name="q" value="A"> 选项 A</label>
+        <label><input type="radio" name="q" value="B"> 选项 B</label>
+        <button id="submit" style="width:80px;height:28px">提交答案</button>
+    </div>
+</div>
+
+<script>
+(function () {
+    window.__listClicks = [];
+    window.__submitClicks = 0;
+    var list = document.getElementById('list');
+    list.addEventListener('click', function (e) {
+        var li = e.target.closest ? e.target.closest('li') : null;
+        if (!li) { return; }
+        window.__listClicks.push(li.getAttribute('data-i'));
+        Array.prototype.forEach.call(list.children, function (n) { n.classList.remove('active'); });
+        li.classList.add('active');
+    });
+    document.getElementById('submit').addEventListener('click', function () { window.__submitClicks += 1; });
+
+    // 假视频：属性可控、play() 可观测
+    var st = { duration: 600, currentTime: 0, ended: false, paused: true, seeking: false, loop: false, muted: false };
+    window.__st = st;
+    window.__plays = 0;
+    var v = document.getElementById('v');
+    ['duration', 'currentTime', 'ended', 'paused', 'seeking', 'loop'].forEach(function (k) {
+        Object.defineProperty(v, k, { get: function () { return st[k]; }, configurable: true });
+    });
+    Object.defineProperty(v, 'muted', {
+        configurable: true,
+        get: function () { return st.muted; },
+        set: function (val) { st.muted = !!val; }
+    });
+    v.play = function () { window.__plays += 1; st.paused = false; return Promise.resolve(); };
+    v.pause = function () { st.paused = true; };
+})();
+</script>
+
+<script src="../dist/video-finish-watcher-special.user.js"></script>
+
+<script>
+(function () {
+    var st = window.__st;
+    var v = document.getElementById('v');
+    var log = document.getElementById('log');
+    function report(line) {
+        log.textContent = (log.textContent === 'boot' ? '' : log.textContent + '\n') + line;
+    }
+    function fire(el, name) { el.dispatchEvent(new Event(name)); }
+    var T = window.__VFW_YT__ && window.__VFW_YT__._test;
+
+    setTimeout(function () {
+        if (!T) { report('RESULT no-module'); return; }
+
+        // 1) 强制静音：即使播放器自己取消了静音，play 时也要压回去
+        st.muted = true; st.paused = false;
+        fire(v, 'play');
+        st.muted = false;              // 站点换集时把声音放出来
+        fire(v, 'play');
+        report('RESULT forcemute muted=' + st.muted);
+
+        // 2) 播完 → 点目录里的下一项（1.2）
+        st.currentTime = 600; st.ended = true; st.paused = true;
+        fire(v, 'timeupdate');
+        fire(v, 'ended');
+        setTimeout(function () {
+            report('RESULT advance clicks=' + window.__listClicks.join(',') + ' active=' + document.querySelector('#list li.active').getAttribute('data-i'));
+
+            // 3) 停住续播：播到一半被暂停 → play() 被调用
+            st.ended = false; st.currentTime = 120; st.paused = true;
+            T.resetUser();
+            T.resumeTick();
+            report('RESULT resume plays=' + window.__plays + ' paused=' + st.paused);
+
+            // 4) 选择题自动作答：勾选第一个选项并点「提交答案」（v1.6 才有）
+            if (!T.tryAnswer) { report('RESULT extra absent'); report('DONE'); return; }
+            document.getElementById('quiz').style.display = 'block';
+            var ok = T.tryAnswer();
+            var picked = document.querySelector('input[name="q"]:checked');
+            report('RESULT answer ok=' + ok + ' picked=' + (picked ? picked.value : 'none') + ' submit=' + window.__submitClicks);
+
+            // 5) 非视频项：没有视频播放 → 跳到下一项（1.3 → 1.4）
+            document.getElementById('quiz').style.display = 'none';
+            v.remove();
+            T.resetAdvance(); T.resetSkip(); T.resetUser();
+            T.setNoVideoSince(Date.now() - 9000);
+            T.nonVideoTick();
+            report('RESULT skip clicks=' + window.__listClicks.join(',') + ' active=' + document.querySelector('#list li.active').getAttribute('data-i'));
+            report('DONE');
+        }, 900);
+    }, 300);
+})();
+</script>
+</body>
+</html>
